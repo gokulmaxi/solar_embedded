@@ -33,7 +33,7 @@
 #include <string.h>
 #include "cJSON.h"
 static const char *TAG = "MQTT_EXAMPLE";
-
+char dataVal[10];
 static esp_mqtt_client_handle_t mqtt_client;
 #define ECHO_TEST_TXD (CONFIG_APP_UART_TXD)
 #define ECHO_TEST_RXD (CONFIG_APP_UART_RXD)
@@ -49,6 +49,7 @@ static esp_mqtt_client_handle_t mqtt_client;
 #define BUF_SIZE (2024)
 static EventGroupHandle_t mqtt_event_group;
 const int MQTTCONNECTED_BIT = BIT2;
+const int MQTT_MSG_PROCESS_BIT=BIT3;
 static void log_error_if_nonzero(const char * message, int error_code)
 {
     if (error_code != 0) {
@@ -63,12 +64,11 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
     // your_context_t *context = event->context;
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED:
-                    xEventGroupSetBits(mqtt_event_group, MQTTCONNECTED_BIT);
+            xEventGroupSetBits(mqtt_event_group, MQTTCONNECTED_BIT);
+            xEventGroupSetBits(mqtt_event_group,MQTT_MSG_PROCESS_BIT);
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-            msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
-            ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
 
-            msg_id = esp_mqtt_client_subscribe(client, "/topic/qos0", 0);
+            msg_id = esp_mqtt_client_subscribe(client, "/gokul/data_msg", 1);
             ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
             
             break;
@@ -79,8 +79,6 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
 
         case MQTT_EVENT_SUBSCRIBED:
             ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-            msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
-            ESP_LOGI(TAG, "sent publish successful, msg_id=%d", msg_id);
             break;
         case MQTT_EVENT_UNSUBSCRIBED:
             ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
@@ -92,6 +90,28 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
             ESP_LOGI(TAG, "MQTT_EVENT_DATA");
             printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
             printf("DATA=%.*s\r\n", event->data_len, event->data);
+            printf("%i",strncmp(event->topic,"/gokul/data_msg",event->topic_len));
+            printf("%i",event->topic_len);
+            if(!strncmp(event->topic, "/gokul/data_msg",event->topic_len)){
+                        ESP_LOGI(TAG,"message published in topic");
+                        xEventGroupClearBits(mqtt_event_group,MQTT_MSG_PROCESS_BIT);
+                        //strcpy(dataVal,(char *)event->data);
+                        //printf("%s",dataVal); 
+                        printf("%i",strncmp(event->data,"off",event->data_len));
+                        printf("%i",event->data_len);
+                        if(strncmp(event->data,"off",event->data_len)==0){
+
+                            ESP_LOGI(TAG,"sending OFF");
+                            uart_write_bytes(ECHO_UART_PORT_NUM, "SC2 \r\n",7);
+                        }
+                        if (!strncmp(event->data,"on",event->data_len)) {
+                            ESP_LOGI(TAG,"sending ON");
+                            uart_write_bytes(ECHO_UART_PORT_NUM,"SB1 \r\n",7 );
+                        }
+                        
+                        vTaskDelay(1000 / portTICK_PERIOD_MS);
+                        xEventGroupSetBits(mqtt_event_group,MQTT_MSG_PROCESS_BIT);
+                    }
             break;
         case MQTT_EVENT_ERROR:
             ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
@@ -151,9 +171,10 @@ static void uart_app_intit(){
 static void echo_task(void *params)
 {
     // Configure a temporary buffer for the incoming data and proccesing data
-    ESP_LOGI("uart loop", "entering into loop");
     char *data = (char *) malloc(BUF_SIZE);
     while (1) {
+
+	      xEventGroupWaitBits(mqtt_event_group, MQTT_MSG_PROCESS_BIT, false, true, portMAX_DELAY);
         ESP_LOGI("uart loop","requesting uart data");
         char *jsonString = (char*)malloc(20*sizeof(char));
         cJSON *root;
