@@ -50,13 +50,15 @@ static esp_mqtt_client_handle_t mqtt_client;
 static EventGroupHandle_t mqtt_event_group;
 const int MQTTCONNECTED_BIT = BIT2;
 const int MQTT_MSG_PROCESS_BIT=BIT3;
+bool inverter =false;
+bool critical_load = false;
+bool non_critical_load = false; 
 static void log_error_if_nonzero(const char * message, int error_code)
 {
     if (error_code != 0) {
         ESP_LOGE(TAG, "Last error %s: 0x%x", message, error_code);
     }
 }
-
 static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
 {
     esp_mqtt_client_handle_t client = event->client;
@@ -68,7 +70,9 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
             xEventGroupSetBits(mqtt_event_group,MQTT_MSG_PROCESS_BIT);
             ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
 
-            msg_id = esp_mqtt_client_subscribe(client, "/gokul/data_msg", 1);
+            msg_id = esp_mqtt_client_subscribe(client, "gokul/critical_load", 1);
+            msg_id=esp_mqtt_client_subscribe(client,"gokul/non_critical_load" ,1);
+            msg_id=esp_mqtt_client_subscribe(client, "gokul/inverter", 1);
             ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
             
             break;
@@ -90,9 +94,7 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
             ESP_LOGI(TAG, "MQTT_EVENT_DATA");
             printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
             printf("DATA=%.*s\r\n", event->data_len, event->data);
-            printf("%i",strncmp(event->topic,"/gokul/data_msg",event->topic_len));
-            printf("%i",event->topic_len);
-            if(!strncmp(event->topic, "/gokul/data_msg",event->topic_len)){
+            if(!strncmp(event->topic, "gokul/inverter",event->topic_len)){
                         ESP_LOGI(TAG,"message published in topic");
                         xEventGroupClearBits(mqtt_event_group,MQTT_MSG_PROCESS_BIT);
                         //strcpy(dataVal,(char *)event->data);
@@ -111,6 +113,37 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
                         
                         vTaskDelay(1000 / portTICK_PERIOD_MS);
                         xEventGroupSetBits(mqtt_event_group,MQTT_MSG_PROCESS_BIT);
+                        }
+
+            if(!strncmp(event->topic, "gokul/critical_load",event->topic_len)){
+                        ESP_LOGI(TAG,"message published critical_load in topic");
+                        printf("%i",strncmp(event->data,"off",event->data_len));
+                        printf("%i",event->data_len);
+                        if(strncmp(event->data,"off",event->data_len)==0){
+                            critical_load=false;
+                            ESP_LOGI(TAG,"sending OFF");
+                        }
+                        if (!strncmp(event->data,"on",event->data_len)) {
+                            critical_load=true;
+                            ESP_LOGI(TAG,"sending ON");
+                        }
+                        
+                        vTaskDelay(1000 / portTICK_PERIOD_MS);
+                        }
+            if(!strncmp(event->topic, "gokul/non_critical_load",event->topic_len)){
+                        ESP_LOGI(TAG,"message published critical load in topic");
+                        printf("%i",strncmp(event->data,"off",event->data_len));
+                        printf("%i",event->data_len);
+                        if(strncmp(event->data,"off",event->data_len)==0){
+                            non_critical_load=false;
+                            ESP_LOGI(TAG,"sending OFF");
+                        }
+                        if (!strncmp(event->data,"on",event->data_len)) {
+                            ESP_LOGI(TAG,"sending ON");
+                            non_critical_load=true;
+                        }
+                        
+                        vTaskDelay(1000 / portTICK_PERIOD_MS);
                     }
             break;
         case MQTT_EVENT_ERROR:
@@ -204,10 +237,12 @@ static void echo_task(void *params)
             cJSON_AddStringToObject(root, "mainStatus",array[5]);
             cJSON_AddStringToObject(root, "batteryStatus",array[6]);
             cJSON_AddStringToObject(root, "inverterStatus",array[7]);
+            cJSON_AddBoolToObject(root,"critical", critical_load);
+            cJSON_AddBoolToObject(root,"non-critical",non_critical_load);
             jsonString=cJSON_Print(root);
             ESP_LOGI("json","%s",jsonString);
             xEventGroupWaitBits(mqtt_event_group,MQTTCONNECTED_BIT, false,true ,portMAX_DELAY );
-            esp_mqtt_client_publish(mqtt_client,"/gokul/data" ,jsonString,strlen(jsonString), 0,0);
+            esp_mqtt_client_publish(mqtt_client,"gokul/data" ,jsonString,strlen(jsonString), 0,0);
             free(jsonString);
             cJSON_Delete(root);
             root=NULL;
